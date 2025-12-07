@@ -11,6 +11,7 @@ TESForm* questForm;
 TESForm* requiredPerk;
 BGSListForm* validProjectiles[5];
 using IniData = std::unordered_map<std::string, std::unordered_map<std::string, std::string>>;
+IniData config;
 static GPtr<IMenu> hudMenu;
 std::string containerName;
 TESGlobal* strengthMod;
@@ -35,7 +36,7 @@ static float weaponMults[] = {
     1.0f,
     1.0f // warhammer
 };
-bool bAutoOpen = true;
+bool bAutoOpen = true; /* kept for backward compatibility */
 
 void UpdateWidget(int state) {
     GFxValue rootMenu;
@@ -47,35 +48,53 @@ void UpdateWidget(int state) {
     }
 }
 
-IniData LoadIni(const char* filename) {
+void LoadIni(const char* filename, IniData& outData) {
     CSimpleIniA ini;
-    ini.SetUnicode();  // optional: if your INI contains UTF-8
+    ini.SetUnicode();
+    ini.SetMultiKey(false);  // assuming you don't want duplicate keys
 
     SI_Error rc = ini.LoadFile(filename);
     if (rc < 0) {
         throw std::runtime_error("Failed to load INI file");
     }
 
-    IniData data;
-
-    // Get all section names
     CSimpleIniA::TNamesDepend sections;
     ini.GetAllSections(sections);
 
     for (auto& sec : sections) {
+        // lowercased section name
         std::string section = sec.pItem;
+        std::transform(section.begin(), section.end(), section.begin(), ::tolower);
 
-        // Get all keys in this section
         CSimpleIniA::TNamesDepend keys;
-        ini.GetAllKeys(section.c_str(), keys);
+        ini.GetAllKeys(sec.pItem, keys);
 
         for (auto& key : keys) {
-            const char* value = ini.GetValue(section.c_str(), key.pItem, "");
-            data[section][key.pItem] = value ? value : "";
+            std::string keyName = key.pItem;
+            std::transform(keyName.begin(), keyName.end(), keyName.begin(), ::tolower);
+
+            const char* value = ini.GetValue(sec.pItem, key.pItem, "");
+            outData[section][keyName] = value ? value : "";
         }
     }
+}
 
-    return data;
+std::string GetIni(const std::string& section, const std::string& key) {
+    // normalize to lowercase, because when we interface with Papyrus the casing is unreliable
+    std::string sec = section;
+    std::string opt = key;
+
+    std::transform(sec.begin(), sec.end(), sec.begin(), ::tolower);
+    std::transform(opt.begin(), opt.end(), opt.begin(), ::tolower);
+
+    auto sit = config.find(sec);
+    if (sit == config.end()) return "";
+
+    const auto& inner = sit->second;
+    auto kit = inner.find(opt);
+    if (kit == inner.end()) return "";
+
+    return kit->second;
 }
 
 template <class... Args>
@@ -109,13 +128,17 @@ bool HasPerks() {
             return true;
         }
     } else if (requiredPerk->Is(FormType::FormList)) {
-        for (auto* form : static_cast<BGSListForm*>(requiredPerk)->forms) {
-            if (form && form->Is(FormType::Perk)) {
-                if (player->HasPerk(static_cast<BGSPerk*>(form))) {
-                    return true;
-                }
+        bool result = false;
+        requiredPerk->As<BGSListForm>()->ForEachForm([&](TESForm& listItem) {
+            BGSPerk* perk = listItem.As<BGSPerk>();
+            if (perk && player->HasPerk(perk)) {
+                result = true;
+                return BSContainer::ForEachResult::kStop;
             }
-        }
+            return BSContainer::ForEachResult::kContinue;
+        });
+
+        return result;
     }
 
     return false;
@@ -125,8 +148,8 @@ float GetPlayerStrength() {
     ActorValueOwner* avo = player->AsActorValueOwner();
     float strength = 0.0f;
     if (avo) {
-        strength = fPowerMult * ((avo->GetBaseActorValue(ActorValue::kHealth) * fPowerHealthMult) +
-                                    (fPowerStaminaMult * avo->GetBaseActorValue(ActorValue::kStamina)));
+        strength = fPowerMult * ((avo->GetActorValue(ActorValue::kHealth) * fPowerHealthMult) +
+                                    (fPowerStaminaMult * avo->GetActorValue(ActorValue::kStamina)));
     }
     return strength;
 }
@@ -225,7 +248,7 @@ struct theSink : public BSTEventSink<TESHitEvent>, public BSTEventSink<SKSE::Cro
     }
 
     BSEventNotifyControl ProcessEvent(const SKSE::CrosshairRefEvent* event,
-                                             BSTEventSource<SKSE::CrosshairRefEvent>* source) {
+                                             BSTEventSource<SKSE::CrosshairRefEvent>*) {
         static int lastState = 0;
         int newState = 0;
         auto ref = event->crosshairRef;
@@ -251,31 +274,31 @@ struct theSink : public BSTEventSink<TESHitEvent>, public BSTEventSink<SKSE::Cro
 
 bool SetConfig() {
     try {
-        auto config = LoadIni("Data/SKSE/Plugins/LockBashing.ini");
-        requiredPower[0] = stoi(config["Main"]["iRequiredPowerNovice"]);
-        requiredPower[1] = stoi(config["Main"]["iRequiredPowerApprentice"]);
-        requiredPower[2] = stoi(config["Main"]["iRequiredPowerAdept"]);
-        requiredPower[3] = stoi(config["Main"]["iRequiredPowerExpert"]);
-        requiredPower[4] = stoi(config["Main"]["iRequiredPowerMaster"]);
-        bAllLocks = config["Main"]["bAllLocks"] == "1";
-        fPowerMult = stof(config["Main"]["fPowerMult"]);
-        fPowerHealthMult = stof(config["Main"]["fPowerHealthMult"]);
-        fPowerStaminaMult = stof(config["Main"]["fPowerStaminaMult"]);
-        if (config["Main"]["sRequiredPerk"] != "") {
-            requiredPerk = TESForm::LookupByEditorID(config["Main"]["sRequiredPerk"]);
+        LoadIni("Data/SKSE/Plugins/LockBashing.ini", config);
+        requiredPower[0] = stoi(GetIni("Main", "iRequiredPowerNovice"));
+        requiredPower[1] = stoi(GetIni("Main", "iRequiredPowerApprentice"));
+        requiredPower[2] = stoi(GetIni("Main", "iRequiredPowerAdept"));
+        requiredPower[3] = stoi(GetIni("Main", "iRequiredPowerExpert"));
+        requiredPower[4] = stoi(GetIni("Main", "iRequiredPowerMaster"));
+        bAllLocks = GetIni("Main", "bAllLocks") == "1";
+        fPowerMult = stof(GetIni("Main", "fPowerMult"));
+        fPowerHealthMult = stof(GetIni("Main", "fPowerHealthMult"));
+        fPowerStaminaMult = stof(GetIni("Main", "fPowerStaminaMult"));
+        if (GetIni("Main", "sRequiredPerk") != "") {
+            requiredPerk = TESForm::LookupByEditorID(GetIni("Main", "sRequiredPerk"));
         }
-        if (config["Widget"]["bEnableHudWidget"] == "1") {
-            containerName = fmt::format("LockBashing_{}_{}_{}", config["Widget"]["iHudWidgetScale"],
-                                        config["Widget"]["iHudWidgetXOffset"], config["Widget"]["iHudWidgetYOffset"]);
+        if (GetIni("Widget", "bEnableHudWidget") == "1") {
+            containerName = fmt::format("LockBashing_{}_{}_{}", GetIni("Widget", "iHudWidgetScale"),
+                                        GetIni("Widget", "iHudWidgetXOffset"), GetIni("Widget", "iHudWidgetYOffset"));
         }
-        if (config["Main"]["bAutoOpenContainers"] == "0") {
+        if (GetIni("Main", "bAutoOpenContainers") == "0") {
             bAutoOpen = false;
         }
         std::size_t i = 0;
         for (const auto& value : {"fUnarmedMult", "fSwordMult", "fDaggerMult", "fWarAxeMult", "fMaceMult", "fGreatswordMult",
               "fBattleaxeMult", "fBowMult", "", "fCrossbowMult", "fWarhammerMult"}) {
-            if (config["Weapons"][value] != "") {
-                weaponMults[i] = stof(config["Weapons"][value]);
+            if (GetIni("Weapons", value) != "") {
+                weaponMults[i] = stof(GetIni("Weapons", value));
             }
             i++;
         }
@@ -340,10 +363,20 @@ TESObjectREFR* GetLinkedDoor(StaticFunctionTag*, TESObjectREFR* door) {
 
 bool GetAutoOpen(StaticFunctionTag*) { return bAutoOpen; }
 
+BSFixedString GetIniValue(StaticFunctionTag*, BSFixedString section, BSFixedString key) {
+    std::string sec(section.c_str());
+    std::string opt(key.c_str());
+
+    std::string value = GetIni(sec, opt);
+
+    return BSFixedString(value.c_str());
+}
+
 bool PapyrusBinder(BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("UpdateCrosshairs", "LockBashing_Script", UpdateCrosshairs);
     vm->RegisterFunction("GetLinkedDoor", "LockBashing_Script", GetLinkedDoor);
     vm->RegisterFunction("GetAutoOpen", "LockBashing_Script", GetAutoOpen);
+    vm->RegisterFunction("GetIniValue", "LockBashing_Script", GetIniValue);
 
     return false;
 }
