@@ -323,33 +323,33 @@ void GrabForms() {
 
 static theSink* g_eventSink;
 
-void setupHudWidget() {
-    if (containerName != "") { /* bEnableHudWidget is true */
-        auto ui = UI::GetSingleton();
-        if (!ui || !ui->IsMenuOpen(HUDMenu::MENU_NAME)) {
-            return;
-        }
-
-        hudMenu = ui->GetMenu(HUDMenu::MENU_NAME);
-        if (!hudMenu || !hudMenu->uiMovie) {
-            return;
-        }
-
-        GFxValue rootMenu;
-        if (hudMenu->uiMovie->GetVariable(&rootMenu, "_root.HUDMovieBaseInstance")) {
-            GFxValue args[2];
-            args[0] = GFxValue(containerName);
-            args[1] = GFxValue(8541);
-            rootMenu.Invoke("createEmptyMovieClip", nullptr, args, 2);
-        }
-        if (hudMenu->uiMovie->GetVariable(&rootMenu, ("_root.HUDMovieBaseInstance." + containerName).c_str())) {
-            GFxValue args[1];
-            args[0] = GFxValue("lockbashing_inject.swf");
-            rootMenu.Invoke("loadMovie", nullptr, args, 1);
-        }
-
-        SKSE::GetCrosshairRefEventSource()->AddEventSink(g_eventSink);
+void InjectWidget() {
+    if (containerName == "") { /* bEnableHudWidget is false */
+        return;
     }
+
+    auto ui = UI::GetSingleton();
+    if (!ui) return;
+
+    hudMenu = ui->GetMenu(HUDMenu::MENU_NAME);
+    if (!hudMenu || !hudMenu->uiMovie) {
+        return;
+    }
+
+    GFxValue rootMenu;
+    if (hudMenu->uiMovie->GetVariable(&rootMenu, "_root.HUDMovieBaseInstance")) {
+        GFxValue args[2];
+        args[0] = GFxValue(containerName);
+        args[1] = GFxValue(8541);
+        rootMenu.Invoke("createEmptyMovieClip", nullptr, args, 2);
+    }
+    if (hudMenu->uiMovie->GetVariable(&rootMenu, ("_root.HUDMovieBaseInstance." + containerName).c_str())) {
+        GFxValue args[1];
+        args[0] = GFxValue("lockbashing_inject.swf");
+        rootMenu.Invoke("loadMovie", nullptr, args, 1);
+    }
+
+    SKSE::GetCrosshairRefEventSource()->AddEventSink(g_eventSink);
 }
 
 void UpdateCrosshairs(StaticFunctionTag*) { player->UpdateCrosshairs(); }
@@ -401,7 +401,10 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
             g_eventSink = new theSink();
             auto* eventSourceHolder = ScriptEventSourceHolder::GetSingleton();
             eventSourceHolder->AddEventSink<TESHitEvent>(g_eventSink);
-            setupHudWidget();
+            
+            SKSE::GetTaskInterface()->AddUITask([]() {
+                InjectWidget();
+            });
         }
     });
 
