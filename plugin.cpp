@@ -13,7 +13,7 @@ BGSListForm* validProjectiles[5];
 using IniData = std::unordered_map<std::string, std::unordered_map<std::string, std::string>>;
 IniData config;
 static GPtr<IMenu> hudMenu;
-std::string containerName;
+std::string containerName = "LockBashing";
 TESGlobal* strengthMod;
 
 // config
@@ -37,6 +37,9 @@ static float weaponMults[] = {
     1.0f // warhammer
 };
 bool bAutoOpen = true; /* kept for backward compatibility */
+int iHudWidgetScale;
+int iHudWidgetXOffset;
+int iHudWidgetYOffset;
 
 void UpdateWidget(int state) {
     GFxValue rootMenu;
@@ -47,6 +50,20 @@ void UpdateWidget(int state) {
         rootMenu.Invoke("setState", nullptr, args, 1);
     }
 }
+
+void SetWidgetOptions() {
+    GFxValue rootMenu;
+    if (hudMenu->uiMovie->GetVariable(&rootMenu,
+                                      ("_root.HUDMovieBaseInstance." + containerName + ".Menu_mc").c_str())) {
+        GFxValue args[3];
+        args[0] = GFxValue(iHudWidgetScale);
+        args[1] = GFxValue(iHudWidgetXOffset);
+        args[2] = GFxValue(iHudWidgetYOffset);
+        rootMenu.Invoke("setOptions", nullptr, args, 3);
+    }
+}
+
+void RegisterForCrosshairRef();
 
 void LoadIni(const char* filename, IniData& outData) {
     CSimpleIniA ini;
@@ -222,7 +239,9 @@ bool CanBreak(int lockLevel, TESBoundObject* target, FormID source) {
     return false;
 }
 
-struct theSink : public BSTEventSink<TESHitEvent>, public BSTEventSink<SKSE::CrosshairRefEvent> {
+struct theSink : public BSTEventSink<TESHitEvent>,
+                 public BSTEventSink<SKSE::CrosshairRefEvent>,
+                 public BSTEventSink <ModCallbackEvent> {
     BSEventNotifyControl ProcessEvent(const TESHitEvent* event, BSTEventSource<TESHitEvent>*) {
         if (!event->cause || !event->cause->IsPlayerRef() || !event->target ||
             (!allowBashAttack && event->flags.any(TESHitEvent::Flag::kBashAttack))) {
@@ -270,26 +289,38 @@ struct theSink : public BSTEventSink<TESHitEvent>, public BSTEventSink<SKSE::Cro
 
         return BSEventNotifyControl::kContinue;
     }
+
+    BSEventNotifyControl ProcessEvent(const ModCallbackEvent* event, BSTEventSource<ModCallbackEvent>* source) {
+        if (event && event->eventName == "Lockbashing_WidgetLoaded") {
+            SetWidgetOptions();
+            RegisterForCrosshairRef();
+            source->RemoveEventSink(this);
+        }
+        return BSEventNotifyControl::kContinue;
+    }
 };
 
 bool SetConfig() {
     try {
         LoadIni("Data/SKSE/Plugins/LockBashing.ini", config);
-        requiredPower[0] = stoi(GetIni("Main", "iRequiredPowerNovice"));
-        requiredPower[1] = stoi(GetIni("Main", "iRequiredPowerApprentice"));
-        requiredPower[2] = stoi(GetIni("Main", "iRequiredPowerAdept"));
-        requiredPower[3] = stoi(GetIni("Main", "iRequiredPowerExpert"));
-        requiredPower[4] = stoi(GetIni("Main", "iRequiredPowerMaster"));
+        requiredPower[0] = std::stoi(GetIni("Main", "iRequiredPowerNovice"));
+        requiredPower[1] = std::stoi(GetIni("Main", "iRequiredPowerApprentice"));
+        requiredPower[2] = std::stoi(GetIni("Main", "iRequiredPowerAdept"));
+        requiredPower[3] = std::stoi(GetIni("Main", "iRequiredPowerExpert"));
+        requiredPower[4] = std::stoi(GetIni("Main", "iRequiredPowerMaster"));
         bAllLocks = GetIni("Main", "bAllLocks") == "1";
-        fPowerMult = stof(GetIni("Main", "fPowerMult"));
-        fPowerHealthMult = stof(GetIni("Main", "fPowerHealthMult"));
-        fPowerStaminaMult = stof(GetIni("Main", "fPowerStaminaMult"));
+        fPowerMult = std::stof(GetIni("Main", "fPowerMult"));
+        fPowerHealthMult = std::stof(GetIni("Main", "fPowerHealthMult"));
+        fPowerStaminaMult = std::stof(GetIni("Main", "fPowerStaminaMult"));
         if (GetIni("Main", "sRequiredPerk") != "") {
             requiredPerk = TESForm::LookupByEditorID(GetIni("Main", "sRequiredPerk"));
         }
         if (GetIni("Widget", "bEnableHudWidget") == "1") {
-            containerName = fmt::format("LockBashing_{}_{}_{}", GetIni("Widget", "iHudWidgetScale"),
-                                        GetIni("Widget", "iHudWidgetXOffset"), GetIni("Widget", "iHudWidgetYOffset"));
+            iHudWidgetScale = std::stoi(GetIni("Widget", "iHudWidgetScale"));
+            iHudWidgetXOffset = std::stoi(GetIni("Widget", "iHudWidgetXOffset"));
+            iHudWidgetYOffset = std::stoi(GetIni("Widget", "iHudWidgetYOffset"));
+        } else {
+            containerName = "";
         }
         if (GetIni("Main", "bAutoOpenContainers") == "0") {
             bAutoOpen = false;
@@ -298,7 +329,7 @@ bool SetConfig() {
         for (const auto& value : {"fUnarmedMult", "fSwordMult", "fDaggerMult", "fWarAxeMult", "fMaceMult", "fGreatswordMult",
               "fBattleaxeMult", "fBowMult", "", "fCrossbowMult", "fWarhammerMult"}) {
             if (GetIni("Weapons", value) != "") {
-                weaponMults[i] = stof(GetIni("Weapons", value));
+                weaponMults[i] = std::stof(GetIni("Weapons", value));
             }
             i++;
         }
@@ -323,6 +354,8 @@ void GrabForms() {
 
 static theSink* g_eventSink;
 
+void RegisterForCrosshairRef() { SKSE::GetCrosshairRefEventSource()->AddEventSink(g_eventSink); }
+
 void InjectWidget() {
     if (containerName == "") { /* bEnableHudWidget is false */
         return;
@@ -343,13 +376,13 @@ void InjectWidget() {
         args[1] = GFxValue(8541);
         rootMenu.Invoke("createEmptyMovieClip", nullptr, args, 2);
     }
+
+    GetModCallbackEventSource()->AddEventSink(g_eventSink);
     if (hudMenu->uiMovie->GetVariable(&rootMenu, ("_root.HUDMovieBaseInstance." + containerName).c_str())) {
         GFxValue args[1];
         args[0] = GFxValue("lockbashing_inject.swf");
         rootMenu.Invoke("loadMovie", nullptr, args, 1);
     }
-
-    SKSE::GetCrosshairRefEventSource()->AddEventSink(g_eventSink);
 }
 
 void UpdateCrosshairs(StaticFunctionTag*) { player->UpdateCrosshairs(); }

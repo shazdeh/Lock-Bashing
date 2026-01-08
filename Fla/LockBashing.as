@@ -7,9 +7,11 @@ class LockBashing extends MovieClip {
     public static var instance;
 
     public var HudMenu:MovieClip;
-    public var Crosshair:MovieClip;
+    public var hudAnchor:MovieClip;
 
-    private var config:Array;
+    private var scale:Number;
+    private var xOffset:Number;
+    private var yOffset:Number;
 
     function LockBashing() {
         LockBashing.instance = this;
@@ -17,19 +19,28 @@ class LockBashing extends MovieClip {
 
     function onLoad() {
         HudMenu = _parent._parent;
-        Crosshair = HudMenu.Crosshair;
-        config = _parent._name.split('_');
-        adjustPosition();
+        hudAnchor = HudMenu.Crosshair;
+        onEnterFrame = function() {
+            skse.SendModEvent('Lockbashing_WidgetLoaded');
+            onEnterFrame = null;
+        };
     }
 
     function adjustPosition() {
-        _xscale = _yscale = parseInt(config[1]);
-        _x = Crosshair._x + parseInt(config[2]);
-        _y = Crosshair._y + parseInt(config[3]);
+        _xscale = _yscale = scale;
+        _x = hudAnchor._x + xOffset;
+        _y = hudAnchor._y + yOffset;
     }
 
     // @api
     function setState(a_state:Number) {
         gotoAndStop(a_state + 1);
+    }
+
+    function setOptions(a_scale:Number, a_xOffset:Number, a_yOffset:Number) {
+        scale = a_scale;
+        xOffset = a_xOffset;
+        yOffset = a_yOffset;
+        adjustPosition();
     }
 }
